@@ -1,41 +1,46 @@
+version: "3.9"
+
 networks:
   data-platform-network:
     driver: bridge
 
 services:
+
   zookeeper:
-    image: confluentinc/cp-zookeeper:7.9.4
+    image: confluentinc/cp-zookeeper:7.0.1
     container_name: zookeeper_local
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
     networks:
       - data-platform-network
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
     healthcheck:
       test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
       interval: 10s
       retries: 5
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
 
   kafka:
-    image: confluentinc/cp-kafka:7.9.4
+    image: confluentinc/cp-kafka:7.0.1
     container_name: kafka_local
     depends_on:
       - zookeeper
     environment:
       KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper_local:2181
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
       KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
     ports:
       - "9092:9092"
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "bash", "-c", "kafka-topics --bootstrap-server localhost:9092 --list"]
+      test: ["CMD", "bash", "-c", "kafka-topics --bootstrap-server kafka:9092 --list"]
       interval: 10s
       retries: 10
       start_period: 30s
@@ -119,32 +124,10 @@ services:
     volumes:
       - postgres_airflow_data:/var/lib/postgresql/data
 
-  airflow-init:
-    image: apache/airflow:2.8.2
-    container_name: airflow_init
-    depends_on:
-      - postgres_airflow
-      - redis
-    environment:
-      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
-      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
-      AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
-      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
-    command: >
-      airflow db init &&
-      airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin
-    networks:
-      - data-platform-network
-    volumes:
-      - airflow_dags:/opt/airflow/dags
-      - airflow_plugins:/opt/airflow/plugins
-
   airflow:
     image: apache/airflow:2.8.2
     container_name: airflow_local
     depends_on:
-      - airflow-init
       - postgres_airflow
       - redis
       - kafka
@@ -158,15 +141,21 @@ services:
       - "8085:8080"
     networks:
       - data-platform-network
-    healthcheck:
-      test: ["CMD", "airflow", "db", "check"]
-      interval: 10s
-      timeout: 30s
-      retries: 5
-      start_period: 60s
+    command: >
+      bash -c "
+        airflow db init &&
+        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true &&
+        airflow webserver &
+        airflow scheduler
+      "
     volumes:
       - airflow_dags:/opt/airflow/dags
       - airflow_plugins:/opt/airflow/plugins
+    healthcheck:
+      test: ["CMD", "airflow", "db", "check"]
+      interval: 10s
+      retries: 5
+      start_period: 60s
 
   greenplum:
     image: pro100filipp/greenplum-with-pxf
@@ -175,13 +164,13 @@ services:
     ports:
       - "5433:5432"
     environment:
-      GP_DB: gpadmin
-      GP_USER: gpadmin
-      GP_PASSWORD: gpadmin
+      GP_DB: greenplum_db
+      GP_USER: greenplum_user
+      GP_PASSWORD: greenplum_password
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "gpadmin", "-d", "template1"]
+      test: ["CMD", "pg_isready", "-U", "greenplum_user", "-d", "greenplum_db"]
       interval: 10s
       retries: 5
     volumes:
@@ -239,6 +228,7 @@ services:
 
 volumes:
   zookeeper_data:
+  zookeeper_log:
   kafka_data:
   minio_data:
   redis_data:
