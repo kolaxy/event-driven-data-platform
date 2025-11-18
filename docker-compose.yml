@@ -1,19 +1,10 @@
-version: "3.8"
-
-env_file:
-  - ./data-platform.env
-
-networks:
-  data-platform-network:
-    name: data-platform-network
-    driver: bridge
-
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.9.4
     container_name: zookeeper_local
     environment:
       ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
+      ZOOKEEPER_TICK_TIME: 2000
     networks:
       - data-platform-network
     healthcheck:
@@ -217,3 +208,8 @@ services:
       test: ["CMD", "curl", "-f", "http://localhost:${SUPERSET_PORT}/health"]
       interval: 10s
       retries: 5
+
+networks:
+  data-platform-network:
+    name: data-platform-network
+    driver: bridge
