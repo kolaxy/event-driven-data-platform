@@ -1,47 +1,54 @@
+networks:
+  data-platform-network:
+    driver: bridge
+
 services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.9.4
     container_name: zookeeper_local
     environment:
-      ZOOKEEPER_CLIENT_PORT: ${ZOOKEEPER_CLIENT_PORT}
-      ZOOKEEPER_TICK_TIME: 2000
+      ZOOKEEPER_CLIENT_PORT: 2181
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "nc", "-z", "localhost", "${ZOOKEEPER_CLIENT_PORT}"]
+      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181 | grep imok"]
       interval: 10s
       retries: 5
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
 
-  broker:
-    image: confluentinc/cp-kafka:8.1.0
+  kafka:
+    image: confluentinc/cp-kafka:7.9.4
     container_name: kafka_local
     depends_on:
       - zookeeper
     environment:
-      KAFKA_BROKER_ID: ${KAFKA_BROKER_ID}
-      KAFKA_ZOOKEEPER_CONNECT: ${KAFKA_ZOOKEEPER_CONNECT}
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: ${KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR}
-      KAFKA_LISTENERS: ${KAFKA_LISTENERS}
-      KAFKA_ADVERTISED_LISTENERS: ${KAFKA_ADVERTISED_LISTENERS}
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper_local:2181
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
     ports:
       - "9092:9092"
-    volumes:
-      - ./kafka/data:/var/lib/kafka/data
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      test: ["CMD", "bash", "-c", "kafka-topics --bootstrap-server localhost:9092 --list"]
       interval: 10s
-      retries: 5
+      retries: 10
+      start_period: 30s
+    volumes:
+      - kafka_data:/var/lib/kafka/data
 
   schema-registry:
-    image: confluentinc/cp-schema-registry:8.1.0
+    image: confluentinc/cp-schema-registry:7.9.4
     container_name: schema_registry_local
     depends_on:
-      broker:
-        condition: service_healthy
+      - kafka
     environment:
-      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: ${KAFKA_ZOOKEEPER_CONNECT}
+      SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
       SCHEMA_REGISTRY_HOST_NAME: schema_registry_local
     ports:
       - "8081:8081"
@@ -52,13 +59,12 @@ services:
     image: provectuslabs/kafka-ui:v0.7.2
     container_name: kafka_ui_local
     depends_on:
-      broker:
-        condition: service_healthy
+      - kafka
     ports:
       - "7777:8080"
     environment:
       KAFKA_CLUSTERS_0_NAME: local-cluster
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: broker:9092
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
     networks:
       - data-platform-network
 
@@ -66,21 +72,20 @@ services:
     image: minio/minio
     container_name: minio_local
     environment:
-      MINIO_ROOT_USER: ${MINIO_USER}
-      MINIO_ROOT_PASSWORD: ${MINIO_PASSWORD}
-      MINIO_BROWSER: "on"
+      MINIO_ROOT_USER: minio
+      MINIO_ROOT_PASSWORD: minio123
     command: server /data --console-address ":9001"
     ports:
-      - "9000:9000"
-      - "9001:9001"
-    volumes:
-      - ./minio:/data
+      - "9005:9000"
+      - "9006:9001"
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://minio_local:9000/minio/health/live"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:9000/minio/health/live"]
       interval: 10s
       retries: 5
+    volumes:
+      - minio_data:/data
 
   redis:
     image: redis:7-alpine
@@ -93,42 +98,62 @@ services:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
       retries: 5
+    volumes:
+      - redis_data:/data
 
   postgres_airflow:
     image: postgres:15-alpine
     container_name: postgres_airflow
     environment:
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      POSTGRES_DB: ${POSTGRES_DB}
-    volumes:
-      - ./airflow/var/lib/postgresql/data:/var/lib/postgresql/data
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    ports:
+      - "5432:5432"
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${POSTGRES_USER}"]
+      test: ["CMD", "pg_isready", "-U", "airflow"]
       interval: 10s
       retries: 5
+    volumes:
+      - postgres_airflow_data:/var/lib/postgresql/data
+
+  airflow-init:
+    image: apache/airflow:2.8.2
+    container_name: airflow_init
+    depends_on:
+      - postgres_airflow
+      - redis
+    environment:
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    command: >
+      airflow db init &&
+      airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin
+    networks:
+      - data-platform-network
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_plugins:/opt/airflow/plugins
 
   airflow:
     image: apache/airflow:2.8.2
     container_name: airflow_local
     depends_on:
-      postgres_airflow:
-        condition: service_healthy
-      redis:
-        condition: service_healthy
-      broker:
-        condition: service_healthy
+      - airflow-init
+      - postgres_airflow
+      - redis
+      - kafka
     environment:
-      AIRFLOW__CORE__EXECUTOR: ${AIRFLOW_EXECUTOR}
-      AIRFLOW__CORE__SQL_ALCHEMY_CONN: ${AIRFLOW_SQL_ALCHEMY_CONN}
-      AIRFLOW__CELERY__BROKER_URL: ${AIRFLOW_CELERY_BROKER_URL}
-      AIRFLOW__CORE__LOAD_EXAMPLES: ${AIRFLOW_LOAD_EXAMPLES}
-    volumes:
-      - ./airflow/dags:/opt/airflow/dags
-      - ./airflow/plugins:/opt/airflow/plugins
-      - ./airflow/config:/opt/airflow/config
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
     ports:
       - "8085:8080"
     networks:
@@ -139,33 +164,35 @@ services:
       timeout: 30s
       retries: 5
       start_period: 60s
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_plugins:/opt/airflow/plugins
 
   greenplum:
     image: pro100filipp/greenplum-with-pxf
     container_name: greenplum_local
     hostname: greenplum-local
-    restart: always
     ports:
       - "5433:5432"
     environment:
-      GP_DB: ${GP_DB}
-      GP_USER: ${GP_USER}
-      GP_PASSWORD: ${GP_PASSWORD}
-    volumes:
-      - ./greenplum/data:/srv
+      GP_DB: gpadmin
+      GP_USER: gpadmin
+      GP_PASSWORD: gpadmin
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "pg_isready", "-U", "${GP_USER}", "-d", "${GP_DB}"]
+      test: ["CMD", "pg_isready", "-U", "gpadmin", "-d", "template1"]
       interval: 10s
       retries: 5
+    volumes:
+      - greenplum_data:/srv
 
   pgadmin:
     image: dpage/pgadmin4:9.10.0
     container_name: pgadmin_local
     environment:
-      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_EMAIL}
-      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD}
+      PGADMIN_DEFAULT_EMAIL: admin@admin.com
+      PGADMIN_DEFAULT_PASSWORD: admin
     ports:
       - "5050:80"
     depends_on:
@@ -177,39 +204,48 @@ services:
     image: clickhouse/clickhouse-server:25.10
     container_name: clickhouse_local
     environment:
-      CLICKHOUSE_DB: ${CLICKHOUSE_DB}
-      CLICKHOUSE_USER: ${CLICKHOUSE_USER}
-      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD}
+      CLICKHOUSE_DB: default
+      CLICKHOUSE_USER: default
+      CLICKHOUSE_PASSWORD: ""
     ports:
-      - "${CLICKHOUSE_HTTP_PORT}:${CLICKHOUSE_HTTP_PORT}"
-      - "${CLICKHOUSE_TCP_PORT}:${CLICKHOUSE_TCP_PORT}"
-    volumes:
-      - ./clickhouse/var/lib/clickhouse:/var/lib/clickhouse
-      - ./clickhouse/log:/var/log/clickhouse-server
+      - "8123:8123"
+      - "9000:9000"
     networks:
       - data-platform-network
     healthcheck:
       test: ["CMD", "bash", "-c", "clickhouse client --query='SELECT 1'"]
       interval: 10s
       retries: 5
+    volumes:
+      - clickhouse_data:/var/lib/clickhouse
+      - clickhouse_log:/var/log/clickhouse-server
 
   superset:
     image: apache/superset:latest
     container_name: superset_local
     environment:
-      SUPERSET_ENV: ${SUPERSET_ENV}
+      SUPERSET_ENV: production
+      SUPERSET_SECRET_KEY: NPu/q0Lzqcc7DDJ7Em5iUGKGsEElCz/q7cRPrP1buQU=
     ports:
-      - "${SUPERSET_PORT}:${SUPERSET_PORT}"
-    volumes:
-      - ./superset/config:/app/superset_home
+      - "8088:8088"
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:${SUPERSET_PORT}/health"]
+      test: ["CMD", "curl", "-f", "http://127.0.0.1:8088/health"]
       interval: 10s
       retries: 5
+    volumes:
+      - superset_data:/app/superset_home
 
-networks:
-  data-platform-network:
-    name: data-platform-network
-    driver: bridge
+volumes:
+  zookeeper_data:
+  kafka_data:
+  minio_data:
+  redis_data:
+  postgres_airflow_data:
+  airflow_dags:
+  airflow_plugins:
+  greenplum_data:
+  clickhouse_data:
+  clickhouse_log:
+  superset_data:
