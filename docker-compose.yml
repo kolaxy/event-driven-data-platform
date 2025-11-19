@@ -16,7 +16,6 @@ services:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
 
-
   kafka:
     image: confluentinc/cp-kafka:7.0.1
     container_name: kafka_local
@@ -93,12 +92,15 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis_local
+    environment:
+      REDIS_PASSWORD: redis123
+    command: redis-server --requirepass $${REDIS_PASSWORD}
     ports:
       - "6379:6379"
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
+      test: ["CMD", "redis-cli", "-a", "$${REDIS_PASSWORD}", "ping"]
       interval: 10s
       retries: 5
     volumes:
@@ -132,9 +134,11 @@ services:
     environment:
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
-      AIRFLOW__CELERY__BROKER_URL: redis://redis:6379/0
+      AIRFLOW__CELERY__BROKER_URL: redis://:$${REDIS_PASSWORD}@redis:6379/0
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
+      _AIRFLOW_USER: admin
+      _AIRFLOW_PASSWORD: admin
     ports:
       - "8085:8080"
     networks:
@@ -142,7 +146,7 @@ services:
     command: >
       bash -c "
         airflow db init &&
-        airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin || true &&
+        airflow users create --username $${_AIRFLOW_USER} --firstname Admin --lastname User --role Admin --email admin@example.com --password $${_AIRFLOW_PASSWORD} || true &&
         airflow webserver &
         airflow scheduler
       "
@@ -162,9 +166,9 @@ services:
     ports:
       - "5433:5432"
     environment:
-      GP_DB: greenplum_db
       GP_USER: greenplum_user
       GP_PASSWORD: greenplum_password
+      GP_DB: greenplum_db
     networks:
       - data-platform-network
     volumes:
@@ -187,9 +191,9 @@ services:
     image: clickhouse/clickhouse-server:25.10
     container_name: clickhouse_local
     environment:
-      CLICKHOUSE_DB: default
       CLICKHOUSE_USER: default
-      CLICKHOUSE_PASSWORD: ""
+      CLICKHOUSE_PASSWORD: clickhouse123
+      CLICKHOUSE_DB: default
     ports:
       - "8123:8123"
       - "9000:9000"
@@ -209,6 +213,8 @@ services:
     environment:
       SUPERSET_ENV: production
       SUPERSET_SECRET_KEY: NPu/q0Lzqcc7DDJ7Em5iUGKGsEElCz/q7cRPrP1buQU=
+      _SUPERSET_USER: admin
+      _SUPERSET_PASSWORD: admin
     ports:
       - "8088:8088"
     networks:
