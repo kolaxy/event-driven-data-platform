@@ -1,6 +1,22 @@
+version: '3.8'
+
 networks:
   data-platform-network:
     driver: bridge
+
+volumes:
+  zookeeper_data:
+  zookeeper_log:
+  kafka_data:
+  minio_data:
+  redis_data:
+  postgres_airflow_data:
+  airflow_dags:
+  airflow_plugins:
+  greenplum_data:
+  clickhouse_data:
+  clickhouse_log:
+  superset_data:
 
 services:
 
@@ -29,7 +45,7 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT
       KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
-      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_LOG_DIR: /var/lib/kafka/data
     ports:
       - "9092:9092"
     networks:
@@ -44,13 +60,14 @@ services:
       - kafka_data:/var/lib/kafka/data
 
   schema-registry:
-    image: confluentinc/cp-schema-registry:7.9.4
+    image: confluentinc/cp-schema-registry:7.0.1
     container_name: schema_registry_local
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     environment:
       SCHEMA_REGISTRY_KAFKASTORE_BOOTSTRAP_SERVERS: PLAINTEXT://kafka:9092
-      SCHEMA_REGISTRY_HOST_NAME: schema_registry_local
+      SCHEMA_REGISTRY_HOST_NAME: schema-registry
     ports:
       - "8081:8081"
     networks:
@@ -124,31 +141,34 @@ services:
     volumes:
       - postgres_airflow_data:/var/lib/postgresql/data
 
-  airflow:
+  airflow-webserver:
     image: apache/airflow:2.8.2
-    container_name: airflow_local
+    container_name: airflow_webserver
     depends_on:
-      - postgres_airflow
-      - redis
-      - kafka
+      postgres_airflow:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     environment:
+      REDIS_PASSWORD: redis123
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
-      AIRFLOW__CELERY__BROKER_URL: redis://:$${REDIS_PASSWORD}@redis:6379/0
+      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0   # ← ИСПРАВЛЕНО
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
-      _AIRFLOW_USER: admin
-      _AIRFLOW_PASSWORD: admin
+      _AIRFLOW_WWW_USER_USERNAME: admin
+      _AIRFLOW_WWW_USER_PASSWORD: admin
     ports:
       - "8085:8080"
     networks:
       - data-platform-network
     command: >
       bash -c "
-        airflow db init &&
-        airflow users create --username $${_AIRFLOW_USER} --firstname Admin --lastname User --role Admin --email admin@example.com --password $${_AIRFLOW_PASSWORD} || true &&
-        airflow webserver &
-        airflow scheduler
+        airflow db upgrade &&
+        if ! airflow users list | grep -q admin; then
+          airflow users create --username admin --firstname Admin --lastname User --role Admin --email admin@example.com --password admin;
+        fi &&
+        airflow webserver
       "
     volumes:
       - airflow_dags:/opt/airflow/dags
@@ -158,6 +178,50 @@ services:
       interval: 10s
       retries: 5
       start_period: 60s
+
+  airflow-scheduler:
+    image: apache/airflow:2.8.2
+    container_name: airflow_scheduler
+    depends_on:
+      postgres_airflow:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_PASSWORD: redis123
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0   # ← ИСПРАВЛЕНО
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
+    networks:
+      - data-platform-network
+    command: airflow scheduler
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_plugins:/opt/airflow/plugins
+
+  airflow-worker:
+    image: apache/airflow:2.8.2
+    container_name: airflow_worker
+    depends_on:
+      postgres_airflow:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_PASSWORD: redis123
+      AIRFLOW__CORE__EXECUTOR: CeleryExecutor
+      AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
+      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0   # ← ИСПРАВЛЕНО
+      AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+      AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
+    networks:
+      - data-platform-network
+    command: airflow celery worker
+    volumes:
+      - airflow_dags:/opt/airflow/dags
+      - airflow_plugins:/opt/airflow/plugins
 
   greenplum:
     image: pro100filipp/greenplum-with-pxf
@@ -173,19 +237,6 @@ services:
       - data-platform-network
     volumes:
       - greenplum_data:/srv
-
-  pgadmin:
-    image: dpage/pgadmin4:9.10.0
-    container_name: pgadmin_local
-    environment:
-      PGADMIN_DEFAULT_EMAIL: admin@admin.com
-      PGADMIN_DEFAULT_PASSWORD: admin
-    ports:
-      - "5050:80"
-    depends_on:
-      - greenplum
-    networks:
-      - data-platform-network
 
   clickhouse:
     image: clickhouse/clickhouse-server:25.10
@@ -211,31 +262,26 @@ services:
     image: apache/superset:latest
     container_name: superset_local
     environment:
-      SUPERSET_ENV: production
-      SUPERSET_SECRET_KEY: NPu/q0Lzqcc7DDJ7Em5iUGKGsEElCz/q7cRPrP1buQU=
+      SUPERSET_SECRET_KEY: "NPu/q0Lzqcc7DDJ7Em5iUGKGsEElCz/q7cRPrP1buQU="
       _SUPERSET_USER: admin
       _SUPERSET_PASSWORD: admin
     ports:
       - "8088:8088"
     networks:
       - data-platform-network
+    command: >
+      bash -c "
+        superset db upgrade &&
+        if ! superset fab list-users | grep -q admin; then
+          superset fab create-admin --username $${_SUPERSET_USER} --firstname Admin --lastname Admin --email admin@example.com --password $${_SUPERSET_PASSWORD};
+        fi &&
+        superset init &&
+        superset run -p 8088 --host 0.0.0.0
+      "
+    volumes:
+      - superset_data:/app/superset_home
     healthcheck:
       test: ["CMD", "curl", "-f", "http://127.0.0.1:8088/health"]
       interval: 10s
       retries: 5
-    volumes:
-      - superset_data:/app/superset_home
-
-volumes:
-  zookeeper_data:
-  zookeeper_log:
-  kafka_data:
-  minio_data:
-  redis_data:
-  postgres_airflow_data:
-  airflow_dags:
-  airflow_plugins:
-  greenplum_data:
-  clickhouse_data:
-  clickhouse_log:
-  superset_data:
+      start_period: 60s
