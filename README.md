@@ -13,9 +13,8 @@ This stack includes a full event-driven data platform with the following compone
 - **Object Storage**: MinIO  
 - **Caching & Broker**: Redis  
 - **Workflow Orchestration**: Airflow (CeleryExecutor with Redis + PostgreSQL backend)  
-- **Databases**: PostgreSQL, Greenplum, ClickHouse  
+- **Databases**: PostgreSQL, Greenplum, ClickHouse, Oracle XE  
 - **Visualization**: Superset  
-- **Management UI**: pgAdmin for Greenplum  
 
 All services are connected via a dedicated Docker network: `data-platform-network`.
 
@@ -31,13 +30,13 @@ All services are connected via a dedicated Docker network: `data-platform-networ
 | **Kafka UI** | 7777 | Web UI | — | — | [UI](http://localhost:7777) |
 | **MinIO Console** | 9006 | Web UI | `minio` | `minio123` | [Console](http://localhost:9006) |
 | **MinIO API (S3)** | 9005 | S3-compatible | `minio` | `minio123` | Use `aws-cli` or SDK |
-| **Redis** | 6379 | TCP | default | `redis123` | Requires password for CLI |
+| **Redis** | 6379 | TCP | — | `redis123` | Password-only auth; no username |
 | **PostgreSQL (Airflow)** | 5432 | TCP | `airflow` | `airflow` | SQL backend for Airflow |
 | **Airflow Webserver** | 8085 | Web UI | `admin` | `admin` | [UI](http://localhost:8085) |
 | **Greenplum** | 5433 | PostgreSQL-compatible | `greenplum_user` | `greenplum_password` | Multi-node ready (PXF included) |
-| **pgAdmin** | 5050 | Web UI | `admin@admin.com` | `admin` | [UI](http://localhost:5050) |
-| **ClickHouse HTTP** | 8123 | HTTP API | `default` | `clickhouse123` | Use for queries via HTTP |
-| **ClickHouse Native** | 9000 | TCP client | `default` | `clickhouse123` | Native client connections |
+| **ClickHouse HTTP** | 8123 | HTTP API | `default` | `clickhouse123` | Append `?user=default&password=clickhouse123` to queries |
+| **ClickHouse Native** | 9000 | TCP client | `default` | `clickhouse123` | Use with native client |
+| **Oracle XE** | 1521 | TCP (TNS) | `system` / `sys` | `oracle_password` | Default admin users; SID: `XE` |
 | **Superset** | 8088 | Web UI | `admin` | `admin` | [UI](http://localhost:8088) |
 
 > **Tip:** All credentials are set explicitly in `docker-compose.yml`. No `.env` files are used.
@@ -52,13 +51,13 @@ All services are connected via a dedicated Docker network: `data-platform-networ
 | **Kafka UI** | [http://localhost:7777](http://localhost:7777) |
 | **MinIO Console** | [http://localhost:9006](http://localhost:9006) |
 | **MinIO API (S3)** | `http://localhost:9005` |
-| **pgAdmin** | [http://localhost:5050](http://localhost:5050) |
 | **Superset** | [http://localhost:8088](http://localhost:8088) |
-| **ClickHouse HTTP API** | [http://localhost:8123](http://localhost:8123) |
+| **ClickHouse HTTP API** | [http://localhost:8123/?user=default&password=clickhouse123](http://localhost:8123/?user=default&password=clickhouse123) |
 | **Schema Registry** | [http://localhost:8081/subjects](http://localhost:8081/subjects) |
-| **Zookeeper CLI** | `telnet localhost 2181` → `stat` |
+| **Zookeeper CLI** | `echo stat | nc localhost 2181` |
 | **Redis CLI** | `redis-cli -h localhost -p 6379 -a redis123` |
 | **ClickHouse Client** | `clickhouse client --host localhost --port 9000 --user default --password clickhouse123` |
+| **Oracle SQL*Plus (inside container)** | `sqlplus system/oracle_password@//localhost:1521/XE` |
 
 ---
 
@@ -77,5 +76,5 @@ All services are connected via a dedicated Docker network: `data-platform-networ
 | `greenplum_data` | Greenplum persistent storage |
 | `clickhouse_data` | ClickHouse DB data |
 | `clickhouse_log` | ClickHouse logs |
+| `oracle_data` | Oracle XE database files |
 | `superset_data` | Superset metadata & configuration |
-

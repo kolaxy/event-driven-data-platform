@@ -109,15 +109,13 @@ services:
   redis:
     image: redis:7-alpine
     container_name: redis_local
-    environment:
-      REDIS_PASSWORD: redis123
-    command: redis-server --requirepass $${REDIS_PASSWORD}
+    command: redis-server --requirepass redis123
     ports:
       - "6379:6379"
     networks:
       - data-platform-network
     healthcheck:
-      test: ["CMD", "redis-cli", "-a", "$${REDIS_PASSWORD}", "ping"]
+      test: ["CMD", "redis-cli", "-a", "redis123", "ping"]
       interval: 10s
       retries: 5
     volumes:
@@ -153,7 +151,7 @@ services:
       REDIS_PASSWORD: redis123
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
-      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0   # ← ИСПРАВЛЕНО
+      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
       _AIRFLOW_WWW_USER_USERNAME: admin
@@ -191,7 +189,7 @@ services:
       REDIS_PASSWORD: redis123
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
-      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0   # ← ИСПРАВЛЕНО
+      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
     networks:
@@ -213,7 +211,7 @@ services:
       REDIS_PASSWORD: redis123
       AIRFLOW__CORE__EXECUTOR: CeleryExecutor
       AIRFLOW__CORE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres_airflow:5432/airflow
-      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0   # ← ИСПРАВЛЕНО
+      AIRFLOW__CELERY__BROKER_URL: redis://:redis123@redis:6379/0
       AIRFLOW__CORE__LOAD_EXAMPLES: "false"
       AIRFLOW__CORE__FERNET_KEY: "K7j2m9xFvVwY0rR7K+Xp6Q=="
     networks:
@@ -278,6 +276,21 @@ services:
         superset init &&
         superset run -p 8088 --host 0.0.0.0
       "
+
+    oracle:
+      image: gvenzl/oracle-xe:21-faststart
+      container_name: test_oracle_xe_local
+      environment:
+        - ORACLE_PASSWORD=oracle_password
+      ports:
+        - "1521:1521"
+      volumes:
+        - oracle_data:/opt/oracle/oradata
+      restart: always
+      networks:
+        - data-platform-network
+
+
     volumes:
       - superset_data:/app/superset_home
     healthcheck:
