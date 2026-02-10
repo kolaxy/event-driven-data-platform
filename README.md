@@ -54,7 +54,7 @@ docker-compose down
 | PostgreSQL (Airflow) | 5432       | TCP        | airflow        | airflow            | SQL backend for Airflow                        |
 | Airflow Web          | 8085       | Web UI     | admin          | admin              | [UI](http://localhost:8085)                    |
 | Greenplum            | 5433       | PostgreSQL | greenplum_user | greenplum_password | Multi-node ready                               |
-| ClickHouse HTTP      | 8123       | HTTP API   | default        | clickhouse123      | `?user=default&password=clickhouse123`         |
+| ClickHouse HTTP      | 8123       | HTTP API   | default        | clickhouse123      | [UI](http://localhost:8123/?user=default&password=clickhouse123) |
 | ClickHouse TCP       | 9000       | TCP client | default        | clickhouse123      | Native client                                  |
 | Oracle XE            | 1521       | TCP (TNS)  | system/sys     | oracle_password    | SID: `XE`                                      |
 | Superset             | 8088       | Web UI     | admin          | admin              | [UI](http://localhost:8088)                    |
