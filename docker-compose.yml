@@ -1,5 +1,3 @@
-version: '3.8'
-
 networks:
   data-platform-network:
     driver: bridge
@@ -17,7 +15,12 @@ volumes:
   clickhouse_data:
   clickhouse_log:
   superset_data:
-
+  oracle_data:
+  pinot_controller:
+  pinot_broker:
+  pinot_server:
+  portainer_data:
+    
 services:
 
   zookeeper:
@@ -31,7 +34,13 @@ services:
     volumes:
       - zookeeper_data:/var/lib/zookeeper/data
       - zookeeper_log:/var/lib/zookeeper/log
-
+    healthcheck:
+      test: ["CMD", "echo", "ruok", "|", "nc", "localhost", "2181", "|", "grep", "-q", "imok"]
+      interval: 5s
+      timeout: 3s
+      retries: 6
+      start_period: 10s
+      
   kafka:
     image: confluentinc/cp-kafka:7.0.1
     container_name: kafka_local
@@ -58,6 +67,7 @@ services:
       start_period: 30s
     volumes:
       - kafka_data:/var/lib/kafka/data
+    stop_grace_period: 30s
 
   schema-registry:
     image: confluentinc/cp-schema-registry:7.0.1
@@ -277,20 +287,6 @@ services:
         superset run -p 8088 --host 0.0.0.0
       "
 
-    oracle:
-      image: gvenzl/oracle-xe:21-faststart
-      container_name: test_oracle_xe_local
-      environment:
-        - ORACLE_PASSWORD=oracle_password
-      ports:
-        - "1521:1521"
-      volumes:
-        - oracle_data:/opt/oracle/oradata
-      restart: always
-      networks:
-        - data-platform-network
-
-
     volumes:
       - superset_data:/app/superset_home
     healthcheck:
@@ -298,3 +294,85 @@ services:
       interval: 10s
       retries: 5
       start_period: 60s
+
+
+  oracle:
+    image: gvenzl/oracle-xe:21-faststart
+    container_name: oracle_xe_local
+    environment:
+      - ORACLE_PASSWORD=oracle_password
+    ports:
+      - "1521:1521"
+    volumes:
+      - oracle_data:/opt/oracle/oradata
+    restart: always
+    networks:
+      - data-platform-network
+
+
+  pinot-controller:
+    image: apachepinot/pinot:1.3.0
+    container_name: pinot_controller_local
+    command: "StartController -zkAddress zookeeper:2181"
+    ports:
+      - "9002:9000"
+    networks:
+      - data-platform-network
+    volumes:
+      - pinot_controller:/tmp/data/controller
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+      kafka:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 30s
+
+  pinot-broker:
+    image: apachepinot/pinot:1.3.0
+    container_name: pinot_broker_local
+    command: "StartBroker -zkAddress zookeeper:2181"
+    ports:
+      - "8000:8000"
+    networks:
+      - data-platform-network
+    depends_on:
+      pinot-controller:
+        condition: service_healthy
+    volumes:
+      - pinot_broker:/tmp/data/broker
+
+  pinot-server:
+    image: apachepinot/pinot:1.3.0
+    container_name: pinot_server_local
+    command: "StartServer -zkAddress zookeeper:2181"
+    ports:
+      - "8001:8001"
+    networks:
+      - data-platform-network
+    depends_on:
+      pinot-controller:
+        condition: service_healthy
+    volumes:
+      - pinot_server:/tmp/data/server
+
+  dozzle:
+    container_name: dozzle_local
+    image: amir20/dozzle:latest
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    ports:
+      - "8089:8080"
+
+  portainer:
+    image: portainer/portainer-ce:2.33.7
+    ports:
+      - "8066:9000"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - portainer_data:/data
+    restart: unless-stopped
