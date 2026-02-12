@@ -20,9 +20,12 @@ volumes:
   pinot_broker:
   pinot_server:
   portainer_data:
-    
-services:
+  neo4j_data:
+  neo4j_logs:
+  neo4j_config:
+  neo4j_plugins:
 
+services:
   zookeeper:
     image: confluentinc/cp-zookeeper:7.0.1
     container_name: zookeeper_local
@@ -376,3 +379,17 @@ services:
       - /var/run/docker.sock:/var/run/docker.sock:ro
       - portainer_data:/data
     restart: unless-stopped
+
+  neo4j:
+    image: neo4j:ubi9
+    volumes:
+      - neo4j_data:/data
+      - neo4j_logs:/logs
+      - neo4j_config:/config
+      - neo4j_plugins:/plugins
+    environment:
+        - NEO4J_AUTH=neo4j/neo4j_password
+    ports:
+      - "7474:7474"
+      - "7687:7687"
+    restart: always
